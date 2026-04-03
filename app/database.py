@@ -10,14 +10,15 @@ class BaseModel(Model):
         database = db
 
 
-def init_db(app):
-    database = PostgresqlDatabase(
-        os.environ.get("DATABASE_NAME", "hackathon_db"),
-        host=os.environ.get("DATABASE_HOST", "localhost"),
-        port=int(os.environ.get("DATABASE_PORT", 5432)),
-        user=os.environ.get("DATABASE_USER", "postgres"),
-        password=os.environ.get("DATABASE_PASSWORD", "postgres"),
-    )
+def init_db(app, database=None):
+    if database is None:
+        database = PostgresqlDatabase(
+            os.environ.get("DATABASE_NAME", "hackathon_db"),
+            host=os.environ.get("DATABASE_HOST", "localhost"),
+            port=int(os.environ.get("DATABASE_PORT", 5432)),
+            user=os.environ.get("DATABASE_USER", "postgres"),
+            password=os.environ.get("DATABASE_PASSWORD", "postgres"),
+        )
     db.initialize(database)
 
     @app.before_request

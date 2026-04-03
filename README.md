@@ -1,188 +1,226 @@
-# MLH PE Hackathon — Flask + Peewee + PostgreSQL Template
+# 🔗 URL Shortener Service
 
-A minimal hackathon starter template. You get the scaffolding and database wiring — you build the models, routes, and CSV loading logic.
+A production-ready URL shortener built for the MLH Production Engineering Hackathon.
 
-**Stack:** Flask · Peewee ORM · PostgreSQL · uv
+**Stack:** Flask · Peewee ORM · PostgreSQL · Nginx · Docker · GitHub Actions
 
-## Prerequisites
+## Architecture
 
-- **uv** — a fast Python package manager that handles Python versions, virtual environments, and dependencies automatically.
-  Install it with:
-  ```bash
-  # macOS / Linux
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+                         ┌──────────┐
+                         │  Nginx   │ :80
+                         │  (LB)    │
+                         └────┬─────┘
+                        ┌─────┴─────┐
+                   ┌────▼───┐  ┌────▼───┐
+                   │  web1  │  │  web2  │  Flask :5000
+                   └────┬───┘  └────┬───┘
+                        └─────┬─────┘
+                         ┌────▼─────┐
+                         │PostgreSQL│ :5432
+                         └──────────┘
+```
 
-  # Windows (PowerShell)
-  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-  ```
-  For other methods see the [uv installation docs](https://docs.astral.sh/uv/getting-started/installation/).
-- PostgreSQL running locally (you can use Docker or a local instance)
-
-## uv Basics
-
-`uv` manages your Python version, virtual environment, and dependencies automatically — no manual `python -m venv` needed.
-
-| Command | What it does |
-|---------|--------------|
-| `uv sync` | Install all dependencies (creates `.venv` automatically) |
-| `uv run <script>` | Run a script using the project's virtual environment |
-| `uv add <package>` | Add a new dependency |
-| `uv remove <package>` | Remove a dependency |
+Nginx load-balances across 2 Flask containers. All services orchestrated via Docker Compose.
 
 ## Quick Start
 
 ```bash
-# 1. Clone the repo
-git clone <repo-url> && cd mlh-pe-hackathon
+# 1. Clone & enter
+git clone <repo-url> && cd <repo-name>
 
-# 2. Install dependencies
-uv sync
+# 2. Start everything (Nginx + 2 app instances + Postgres)
+docker compose up --build
 
-# 3. Create the database
-createdb hackathon_db
+# 3. Load CSV seed data
+docker compose exec web1 uv run load_data.py
 
-# 4. Configure environment
-cp .env.example .env   # edit if your DB credentials differ
-
-# 5. Run the server
-uv run run.py
-
-# 6. Verify
-curl http://localhost:5000/health
+# 4. Verify (through Nginx on port 80)
+curl http://localhost/health
 # → {"status":"ok"}
 ```
+
+### Running without Docker
+
+```bash
+uv sync
+cp .env.example .env        # edit DB credentials if needed
+createdb hackathon_db
+uv run load_data.py
+uv run run.py               # runs on port 5000
+```
+
+## API Endpoints
+
+### Health
+
+| Method | Endpoint  | Description          |
+|--------|-----------|----------------------|
+| GET    | `/health` | Returns `{"status":"ok"}` |
+
+### Users
+
+| Method | Endpoint        | Description                     |
+|--------|-----------------|---------------------------------|
+| GET    | `/users`        | List users (paginated)          |
+| GET    | `/users/<id>`   | Get a single user               |
+
+### URLs
+
+| Method | Endpoint        | Description                     |
+|--------|-----------------|---------------------------------|
+| GET    | `/urls`         | List URLs (paginated)           |
+| GET    | `/urls/<id>`    | Get a single URL                |
+| POST   | `/urls`         | Create a short URL              |
+| PUT    | `/urls/<id>`    | Update a URL                    |
+| DELETE | `/urls/<id>`    | Delete a URL                    |
+| GET    | `/<short_code>` | Redirect to original URL        |
+
+#### POST /urls — Request Body
+
+```json
+{
+  "user_id": 1,
+  "original_url": "https://example.com/long-page",
+  "title": "My Link"
+}
+```
+
+#### PUT /urls/:id — Request Body (all fields optional)
+
+```json
+{
+  "title": "New Title",
+  "original_url": "https://example.com/updated",
+  "is_active": false
+}
+```
+
+### Events
+
+| Method | Endpoint   | Description                     |
+|--------|------------|---------------------------------|
+| GET    | `/events`  | List events (paginated)         |
+
+### Pagination
+
+All list endpoints support `?page=1&per_page=20` (max 100 per page).
+
+### Input Validation
+
+- `original_url` must be a valid `http` or `https` URL
+- `user_id` must reference an existing user
+- Pagination params are clamped to safe bounds (page ≥ 1, 1 ≤ per_page ≤ 100)
+- Malformed JSON bodies return 400
+
+### Error Responses
+
+All errors return JSON — never HTML stack traces:
+
+```json
+{"error": "User not found"}
+```
+
+| Status | Meaning                          |
+|--------|----------------------------------|
+| 400    | Bad request / validation error   |
+| 404    | Resource not found               |
+| 405    | Method not allowed               |
+| 410    | URL is inactive (on redirect)    |
+| 500    | Internal server error            |
+
+## Environment Variables
+
+| Variable          | Default        | Description          |
+|-------------------|----------------|----------------------|
+| `DATABASE_NAME`   | `hackathon_db` | PostgreSQL database  |
+| `DATABASE_HOST`   | `localhost`    | Database host        |
+| `DATABASE_PORT`   | `5432`         | Database port        |
+| `DATABASE_USER`   | `postgres`     | Database user        |
+| `DATABASE_PASSWORD`| `postgres`    | Database password    |
+| `FLASK_DEBUG`     | `true`         | Debug mode           |
 
 ## Project Structure
 
 ```
-mlh-pe-hackathon/
 ├── app/
-│   ├── __init__.py          # App factory (create_app)
-│   ├── database.py          # DatabaseProxy, BaseModel, connection hooks
+│   ├── __init__.py          # App factory, error handlers
+│   ├── database.py          # DB proxy, BaseModel, connection hooks
 │   ├── models/
-│   │   └── __init__.py      # Import your models here
+│   │   ├── user.py          # User model
+│   │   ├── url.py           # Url model
+│   │   └── event.py         # Event model
 │   └── routes/
-│       └── __init__.py      # register_routes() — add blueprints here
-├── .env.example             # DB connection template
-├── .gitignore               # Python + uv gitignore
-├── .python-version          # Pin Python version for uv
-├── pyproject.toml           # Project metadata + dependencies
-├── run.py                   # Entry point: uv run run.py
-└── README.md
+│       ├── users.py         # /users endpoints
+│       ├── urls.py          # /urls + /<short_code> endpoints
+│       └── events.py        # /events endpoint
+├── nginx/
+│   └── nginx.conf           # Load balancer config
+├── tests/                   # pytest test suite
+├── .github/workflows/ci.yml # CI pipeline
+├── Dockerfile
+├── docker-compose.yml
+├── load_data.py             # CSV seed data loader
+└── run.py                   # Entry point
 ```
 
-## How to Add a Model
+## Running Tests
 
-1. Create a file in `app/models/`, e.g. `app/models/product.py`:
-
-```python
-from peewee import CharField, DecimalField, IntegerField
-
-from app.database import BaseModel
-
-
-class Product(BaseModel):
-    name = CharField()
-    category = CharField()
-    price = DecimalField(decimal_places=2)
-    stock = IntegerField()
+```bash
+uv run pytest -v                # run all tests
+uv run pytest --cov=app -v      # with coverage report
 ```
 
-2. Import it in `app/models/__init__.py`:
+Tests use an in-memory SQLite database — no Postgres required.
 
-```python
-from app.models.product import Product
+## CI/CD
+
+GitHub Actions runs on every push and PR to `main`:
+1. Installs dependencies with `uv sync`
+2. Runs `pytest` — build fails if any test fails
+3. Checks coverage threshold (≥50%) — build fails if below
+
+See `.github/workflows/ci.yml`.
+
+## Deployment Guide
+
+### Deploy
+
+```bash
+# Build and start all services
+docker compose up --build -d
+
+# Load seed data (first deploy only)
+docker compose exec web1 uv run load_data.py
+
+# Verify
+curl http://localhost/health
 ```
 
-3. Create the table (run once in a Python shell or a setup script):
+### Rollback
 
-```python
-from app.database import db
-from app.models.product import Product
+```bash
+# Stop current deployment
+docker compose down
 
-db.create_tables([Product])
+# Checkout previous working commit
+git checkout <previous-commit-sha>
+
+# Rebuild and restart
+docker compose up --build -d
 ```
 
-## How to Add Routes
+### Scaling
 
-1. Create a blueprint in `app/routes/`, e.g. `app/routes/products.py`:
+The app runs 2 instances behind Nginx by default. To add more, duplicate the `web` service in `docker-compose.yml` and add it to `nginx/nginx.conf` upstream block.
 
-```python
-from flask import Blueprint, jsonify
-from playhouse.shortcuts import model_to_dict
+## Troubleshooting
 
-from app.models.product import Product
-
-products_bp = Blueprint("products", __name__)
-
-
-@products_bp.route("/products")
-def list_products():
-    products = Product.select()
-    return jsonify([model_to_dict(p) for p in products])
-```
-
-2. Register it in `app/routes/__init__.py`:
-
-```python
-def register_routes(app):
-    from app.routes.products import products_bp
-    app.register_blueprint(products_bp)
-```
-
-## How to Load CSV Data
-
-```python
-import csv
-from peewee import chunked
-from app.database import db
-from app.models.product import Product
-
-def load_csv(filepath):
-    with open(filepath, newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    with db.atomic():
-        for batch in chunked(rows, 100):
-            Product.insert_many(batch).execute()
-```
-
-## Useful Peewee Patterns
-
-```python
-from peewee import fn
-from playhouse.shortcuts import model_to_dict
-
-# Select all
-products = Product.select()
-
-# Filter
-cheap = Product.select().where(Product.price < 10)
-
-# Get by ID
-p = Product.get_by_id(1)
-
-# Create
-Product.create(name="Widget", category="Tools", price=9.99, stock=50)
-
-# Convert to dict (great for JSON responses)
-model_to_dict(p)
-
-# Aggregations
-avg_price = Product.select(fn.AVG(Product.price)).scalar()
-total = Product.select(fn.SUM(Product.stock)).scalar()
-
-# Group by
-from peewee import fn
-query = (Product
-         .select(Product.category, fn.COUNT(Product.id).alias("count"))
-         .group_by(Product.category))
-```
-
-## Tips
-
-- Use `model_to_dict` from `playhouse.shortcuts` to convert model instances to dictionaries for JSON responses.
-- Wrap bulk inserts in `db.atomic()` for transactional safety and performance.
-- The template uses `teardown_appcontext` for connection cleanup, so connections are closed even when requests fail.
-- Check `.env.example` for all available configuration options.
+| Problem | Solution |
+|---------|----------|
+| `Connection refused` on port 5432 | Postgres isn't ready yet. Docker Compose healthcheck should handle this — wait a few seconds and retry. |
+| `Connection refused` on port 80 | Nginx hasn't started. Check `docker compose logs nginx`. |
+| `no such table` in tests | Tests use SQLite in-memory. Make sure conftest.py `setup_db` fixture is running. |
+| `uv: command not found` | Install uv: `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| CSV load fails with duplicate key | Data already loaded. Drop and recreate: `docker compose exec web1 uv run -c "from app import create_app; from app.database import db; from app.models import *; app=create_app(); db.drop_tables([Event,Url,User]); db.create_tables([User,Url,Event])"` then re-run `load_data.py`. |
+| App returns HTML errors instead of JSON | All error handlers return JSON. If you see HTML, check that the error handler in `app/__init__.py` is registered. |

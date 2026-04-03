@@ -25,10 +25,16 @@ uv.lock
 
 # pytest
 .pytest_cache/
+htmlcov/
+.coverage
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Hackathon source files
+*.pdf
+hackathon.md
 
 # Judging (not visible to participants)
 judging/
