@@ -91,10 +91,14 @@ def test_redirect_short_code(client, sample_url):
     assert "example.com" in resp.headers["Location"]
 
 
-def test_redirect_inactive(client, sample_url):
-    sample_url.is_active = False
-    sample_url.save()
-    resp = client.get("/abc123")
+def test_redirect_inactive(client, sample_user):
+    from app.models.url import Url
+    Url.create(
+        id=2, user=sample_user, short_code="dead01",
+        original_url="https://example.com", title="Inactive",
+        is_active=False, created_at="2025-01-01", updated_at="2025-01-01",
+    )
+    resp = client.get("/dead01")
     assert resp.status_code == 410
 
 
