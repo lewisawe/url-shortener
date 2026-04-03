@@ -7,6 +7,7 @@ from flask import Blueprint, jsonify, redirect, request
 from peewee import IntegrityError
 from playhouse.shortcuts import model_to_dict
 
+from app.cache import cache_delete_pattern, cache_get, cache_set
 from app.database import db
 from app.models.event import Event
 from app.models.url import Url
@@ -35,16 +36,32 @@ def is_valid_url(url):
 def list_urls():
     page = max(1, request.args.get("page", 1, type=int))
     per_page = min(100, max(1, request.args.get("per_page", 20, type=int)))
+
+    key = f"urls:list:{page}:{per_page}"
+    cached = cache_get(key)
+    if cached:
+        return jsonify(cached)
+
     urls = Url.select().order_by(Url.id).paginate(page, per_page)
-    return jsonify([model_to_dict(u) for u in urls])
+    data = [model_to_dict(u) for u in urls]
+    cache_set(key, data)
+    return jsonify(data)
 
 
 @urls_bp.route("/urls/<int:url_id>")
 def get_url(url_id):
+    key = f"urls:{url_id}"
+    cached = cache_get(key)
+    if cached:
+        return jsonify(cached)
+
     url = Url.get_or_none(Url.id == url_id)
     if not url:
         return jsonify({"error": "URL not found"}), 404
-    return jsonify(model_to_dict(url))
+
+    data = model_to_dict(url)
+    cache_set(key, data)
+    return jsonify(data)
 
 
 @urls_bp.route("/urls", methods=["POST"])
@@ -82,6 +99,7 @@ def create_url():
                     timestamp=now,
                     details=f'{{"short_code":"{short_code}","original_url":"{data["original_url"]}"}}',
                 )
+            cache_delete_pattern("urls:list:*")
             return jsonify(model_to_dict(url)), 201
         except IntegrityError:
             continue
@@ -120,6 +138,8 @@ def update_url(url_id):
             timestamp=now,
         )
 
+    cache_delete_pattern(f"urls:{url_id}")
+    cache_delete_pattern("urls:list:*")
     return jsonify(model_to_dict(url))
 
 
@@ -132,14 +152,25 @@ def delete_url(url_id):
     with db.atomic():
         url.delete_instance(recursive=True)
 
+    cache_delete_pattern(f"urls:{url_id}")
+    cache_delete_pattern("urls:list:*")
     return jsonify({"message": "URL deleted"}), 200
 
 
 @urls_bp.route("/<short_code>")
 def redirect_short(short_code):
+    key = f"redirect:{short_code}"
+    cached = cache_get(key)
+    if cached:
+        if not cached.get("is_active"):
+            return jsonify({"error": "URL is inactive"}), 410
+        return redirect(cached["original_url"])
+
     url = Url.get_or_none(Url.short_code == short_code)
     if not url:
         return jsonify({"error": "Short code not found"}), 404
     if not url.is_active:
         return jsonify({"error": "URL is inactive"}), 410
+
+    cache_set(key, {"original_url": url.original_url, "is_active": url.is_active}, ttl=300)
     return redirect(url.original_url)
