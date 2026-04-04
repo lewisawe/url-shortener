@@ -7,13 +7,13 @@ from app.metrics import metrics_bp, track_request
 from app.routes import register_routes
 
 
-def create_app():
+def create_app(database=None):
     load_dotenv()
 
     app = Flask(__name__)
 
     setup_logging(app)
-    init_db(app)
+    init_db(app, database=database)
 
     from app import models  # noqa: F401 - registers models with Peewee
 

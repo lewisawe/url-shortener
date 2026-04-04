@@ -35,6 +35,8 @@ Thumbs.db
 # Hackathon source files
 *.pdf
 hackathon.md
+TODO.md
 
 # Judging (not visible to participants)
 judging/
+failed_tests.txt

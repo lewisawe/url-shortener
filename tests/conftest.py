@@ -22,12 +22,9 @@ def setup_db():
 @pytest.fixture()
 def client(setup_db):
     from app import create_app
-    from app.database import init_db
 
-    app = create_app()
+    app = create_app(database=test_db)
     app.config["TESTING"] = True
-    # Re-init with test db so before_request uses SQLite
-    init_db(app, database=test_db)
 
     with app.test_client() as c:
         yield c
