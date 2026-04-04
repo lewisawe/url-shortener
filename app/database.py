@@ -21,13 +21,17 @@ def init_db(app, database=None):
         )
         db.initialize(database)
 
-        from app.models.user import User
-        from app.models.url import Url
-        from app.models.event import Event
+        try:
+            from app.models.user import User
+            from app.models.url import Url
+            from app.models.event import Event
 
-        db.connect(reuse_if_open=True)
-        db.create_tables([User, Url, Event])
-        db.close()
+            db.connect(reuse_if_open=True)
+            db.create_tables([User, Url, Event])
+            db.close()
+        except Exception:
+            if not db.is_closed():
+                db.close()
     else:
         db.initialize(database)
 
