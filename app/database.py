@@ -1,5 +1,6 @@
 import os
 
+from flask import request
 from peewee import DatabaseProxy, Model, PostgresqlDatabase
 
 db = DatabaseProxy()
@@ -37,7 +38,12 @@ def init_db(app, database=None):
 
     @app.before_request
     def _db_connect():
-        db.connect(reuse_if_open=True)
+        if request.endpoint == 'health':
+            return
+        try:
+            db.connect(reuse_if_open=True)
+        except Exception:
+            pass
 
     @app.teardown_appcontext
     def _db_close(exc):
