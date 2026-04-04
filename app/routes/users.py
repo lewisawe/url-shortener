@@ -1,3 +1,6 @@
+import csv
+import io
+import json
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
@@ -8,6 +11,11 @@ from app.database import db
 from app.models.user import User
 
 users_bp = Blueprint("users", __name__)
+
+
+def serialize_user(user):
+    d = model_to_dict(user)
+    return d
 
 
 @users_bp.route("/users")
@@ -21,7 +29,7 @@ def list_users():
         return jsonify(cached)
 
     users = User.select().order_by(User.id).paginate(page, per_page)
-    data = [model_to_dict(u) for u in users]
+    data = [serialize_user(u) for u in users]
     cache_set(key, data)
     return jsonify(data)
 
@@ -37,7 +45,7 @@ def get_user(user_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    data = model_to_dict(user)
+    data = serialize_user(user)
     cache_set(key, data)
     return jsonify(data)
 
@@ -47,6 +55,9 @@ def create_user():
     data = request.get_json(silent=True)
     if not data or "username" not in data or "email" not in data:
         return jsonify({"error": "username and email are required"}), 400
+
+    if not isinstance(data["username"], str) or not isinstance(data["email"], str):
+        return jsonify({"error": "username and email must be strings"}), 400
 
     if User.get_or_none(User.username == data["username"]):
         return jsonify({"error": "Username already exists"}), 400
@@ -59,7 +70,7 @@ def create_user():
         created_at=datetime.now(timezone.utc),
     )
     cache_delete_pattern("users:list:*")
-    return jsonify(model_to_dict(user)), 201
+    return jsonify(serialize_user(user)), 201
 
 
 @users_bp.route("/users/<int:user_id>", methods=["PUT"])
@@ -73,14 +84,18 @@ def update_user(user_id):
         return jsonify({"error": "No data provided"}), 400
 
     if "username" in data:
+        if not isinstance(data["username"], str):
+            return jsonify({"error": "username must be a string"}), 400
         user.username = data["username"]
     if "email" in data:
+        if not isinstance(data["email"], str):
+            return jsonify({"error": "email must be a string"}), 400
         user.email = data["email"]
     user.save()
 
     cache_delete_pattern(f"users:{user_id}")
     cache_delete_pattern("users:list:*")
-    return jsonify(model_to_dict(user))
+    return jsonify(serialize_user(user))
 
 
 @users_bp.route("/users/<int:user_id>", methods=["DELETE"])
@@ -93,3 +108,28 @@ def delete_user(user_id):
     cache_delete_pattern(f"users:{user_id}")
     cache_delete_pattern("users:list:*")
     return jsonify({"message": "User deleted"}), 200
+
+
+@users_bp.route("/users/bulk", methods=["POST"])
+def bulk_load_users():
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files["file"]
+    stream = io.StringIO(file.stream.read().decode("utf-8"))
+    reader = csv.DictReader(stream)
+
+    count = 0
+    with db.atomic():
+        for row in reader:
+            User.get_or_create(
+                username=row["username"],
+                defaults={
+                    "email": row["email"],
+                    "created_at": row.get("created_at", datetime.now(timezone.utc)),
+                },
+            )
+            count += 1
+
+    cache_delete_pattern("users:list:*")
+    return jsonify({"imported": count}), 201

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
@@ -11,19 +12,48 @@ from app.models.user import User
 events_bp = Blueprint("events", __name__)
 
 
+def serialize_event(event):
+    d = model_to_dict(event, backrefs=False)
+    # Flatten to url_id and user_id
+    if "url" in d and isinstance(d["url"], dict):
+        d["url_id"] = d["url"]["id"]
+        del d["url"]
+    elif "url" in d:
+        d["url_id"] = d["url"]
+        del d["url"]
+    if "user" in d and isinstance(d["user"], dict):
+        d["user_id"] = d["user"]["id"]
+        del d["user"]
+    elif "user" in d:
+        d["user_id"] = d["user"]
+        del d["user"]
+    # Parse details string as JSON if possible
+    if isinstance(d.get("details"), str):
+        try:
+            d["details"] = json.loads(d["details"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return d
+
+
 @events_bp.route("/events")
 def list_events():
     page = max(1, request.args.get("page", 1, type=int))
     per_page = min(100, max(1, request.args.get("per_page", 20, type=int)))
+    url_id = request.args.get("url_id", type=int)
+    user_id = request.args.get("user_id", type=int)
+    event_type = request.args.get("event_type")
 
-    key = f"events:list:{page}:{per_page}"
-    cached = cache_get(key)
-    if cached:
-        return jsonify(cached)
+    query = Event.select().order_by(Event.id)
+    if url_id:
+        query = query.where(Event.url == url_id)
+    if user_id:
+        query = query.where(Event.user == user_id)
+    if event_type:
+        query = query.where(Event.event_type == event_type)
 
-    events = Event.select().order_by(Event.id).paginate(page, per_page)
-    data = [model_to_dict(e) for e in events]
-    cache_set(key, data, ttl=30)
+    events = query.paginate(page, per_page)
+    data = [serialize_event(e) for e in events]
     return jsonify(data)
 
 
@@ -43,7 +73,6 @@ def create_event():
 
     details = data.get("details")
     if isinstance(details, dict):
-        import json
         details = json.dumps(details)
 
     event = Event.create(
@@ -54,4 +83,4 @@ def create_event():
         details=details,
     )
     cache_delete_pattern("events:list:*")
-    return jsonify(model_to_dict(event)), 201
+    return jsonify(serialize_event(event)), 201
